@@ -45,10 +45,13 @@ import com.google.ai.edge.gallery.R
  *
  * This function renders a row containing a circular progress indicator and a message indicating
  * that the model is currently initializing. It provides a visual cue to the user that the model is
- * in a loading state.
+ * in a loading state, with specific information about the backend (CPU/GPU) being used.
  */
 @Composable
-fun ModelInitializationStatusChip() {
+fun ModelInitializationStatusChip(
+  backend: String = "",
+  phase: String = ""
+) {
   Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
     Box(
       modifier =
@@ -70,9 +73,18 @@ fun ModelInitializationStatusChip() {
 
         Spacer(modifier = Modifier.width(8.dp))
 
-        // Text message.
+        // Dynamic text message based on backend and phase
+        val messageRes = when {
+          backend == "GPU" && phase == "loading" -> R.string.model_loading_gpu
+          backend == "CPU" && phase == "loading" -> R.string.model_loading_cpu
+          backend == "GPU" && phase == "optimizing" -> R.string.model_optimizing_gpu
+          backend == "CPU" && phase == "optimizing" -> R.string.model_preparing_cpu
+          backend == "CPU" && phase == "fallback" -> R.string.model_gpu_fallback
+          else -> R.string.model_is_initializing_msg
+        }
+        
         Text(
-          stringResource(R.string.model_is_initializing_msg),
+          stringResource(messageRes),
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSecondaryContainer,
         )

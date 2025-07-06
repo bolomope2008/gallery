@@ -89,6 +89,8 @@ private const val MODEL_ALLOWLIST_FILENAME = "model_allowlist.json"
 data class ModelInitializationStatus(
   val status: ModelInitializationStatusType,
   var error: String = "",
+  var backend: String = "",
+  var phase: String = "",
 )
 
 enum class ModelInitializationStatusType {
@@ -483,7 +485,20 @@ constructor(
         TaskType.LLM_ASK_IMAGE,
         TaskType.LLM_ASK_AUDIO,
         TaskType.LLM_PROMPT_LAB ->
-          LlmChatModelHelper.initialize(context = context, model = model, onDone = onDone)
+          LlmChatModelHelper.initialize(
+            context = context, 
+            model = model, 
+            onDone = onDone,
+            onProgress = { backend, phase ->
+              // Update initialization status with backend and phase info
+              updateModelInitializationStatus(
+                model = model,
+                status = ModelInitializationStatusType.INITIALIZING,
+                backend = backend,
+                phase = phase
+              )
+            }
+          )
 
         TaskType.TEST_TASK_1 -> {}
         TaskType.TEST_TASK_2 -> {}
@@ -1096,9 +1111,11 @@ constructor(
     model: Model,
     status: ModelInitializationStatusType,
     error: String = "",
+    backend: String = "",
+    phase: String = "",
   ) {
     val curModelInstance = uiState.value.modelInitializationStatus.toMutableMap()
-    curModelInstance[model.name] = ModelInitializationStatus(status = status, error = error)
+    curModelInstance[model.name] = ModelInitializationStatus(status = status, error = error, backend = backend, phase = phase)
     val newUiState = uiState.value.copy(modelInitializationStatus = curModelInstance)
     _uiState.update { newUiState }
   }

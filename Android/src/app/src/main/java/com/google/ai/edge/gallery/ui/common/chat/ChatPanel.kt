@@ -501,6 +501,14 @@ fun ChatPanel(
       }
     }
     
+    // Show model initialization status when initializing
+    if (modelInitializationStatus?.status == ModelInitializationStatusType.INITIALIZING) {
+      ModelInitializationStatusChip(
+        backend = modelInitializationStatus.backend,
+        phase = modelInitializationStatus.phase
+      )
+    }
+    
     // Show "Powered by" label for preloaded models
     if (selectedModel.preloaded) {
       Box(
@@ -533,6 +541,8 @@ fun ChatPanel(
           audioClipMessageCount = audioClipMesssageCountToLastconfigChange,
           modelInitializing =
             modelInitializationStatus?.status == ModelInitializationStatusType.INITIALIZING,
+          initializationBackend = modelInitializationStatus?.backend ?: "",
+          initializationPhase = modelInitializationStatus?.phase ?: "",
           textFieldPlaceHolderRes = task.textInputPlaceHolderRes,
           onValueChanged = { curMessage = it },
           onSendMessage = {

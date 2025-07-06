@@ -142,6 +142,8 @@ fun MessageInputText(
   onValueChanged: (String) -> Unit,
   onSendMessage: (List<ChatMessage>) -> Unit,
   modelPreparing: Boolean = false,
+  initializationBackend: String = "",
+  initializationPhase: String = "",
   onOpenPromptTemplatesClicked: () -> Unit = {},
   onStopButtonClicked: () -> Unit = {},
   showPromptTemplatesInMenu: Boolean = false,

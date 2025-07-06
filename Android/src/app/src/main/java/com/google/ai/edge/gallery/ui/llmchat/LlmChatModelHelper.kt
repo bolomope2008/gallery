@@ -39,13 +39,15 @@ typealias ResultListener = (partialResult: String, done: Boolean) -> Unit
 
 typealias CleanUpListener = () -> Unit
 
+typealias InitializationProgressListener = (backend: String, phase: String) -> Unit
+
 data class LlmModelInstance(val engine: LlmInference, var session: LlmInferenceSession)
 
 object LlmChatModelHelper {
   // Indexed by model name.
   private val cleanUpListeners: MutableMap<String, CleanUpListener> = mutableMapOf()
 
-  fun initialize(context: Context, model: Model, onDone: (String) -> Unit) {
+  fun initialize(context: Context, model: Model, onDone: (String) -> Unit, onProgress: InitializationProgressListener? = null) {
     // Prepare options.
     val maxTokens =
       model.getIntConfigValue(key = ConfigKey.MAX_TOKENS, defaultValue = DEFAULT_MAX_TOKEN)
@@ -62,6 +64,14 @@ object LlmChatModelHelper {
         Accelerator.GPU.label -> LlmInference.Backend.GPU
         else -> LlmInference.Backend.GPU
       }
+    
+    // Report backend selection to UI
+    val backendName = when (preferredBackend) {
+      LlmInference.Backend.CPU -> "CPU"
+      LlmInference.Backend.GPU -> "GPU"
+      else -> "GPU"
+    }
+    onProgress?.invoke(backendName, "loading")
     val optionsBuilder =
       LlmInference.LlmInferenceOptions.builder()
         .setModelPath(model.getPath(context = context))
@@ -72,8 +82,10 @@ object LlmChatModelHelper {
 
     // Create an instance of the LLM Inference task and session.
     try {
+      onProgress?.invoke(backendName, "creating")
       val llmInference = LlmInference.createFromOptions(context, options)
 
+      onProgress?.invoke(backendName, "optimizing")
       val session =
         LlmInferenceSession.createFromOptions(
           llmInference,
