@@ -27,18 +27,18 @@ plugins {
 }
 
 android {
-  namespace = "com.google.ai.edge.gallery"
+  namespace = "com.geoai.geoaimobile"
   compileSdk = 35
 
   defaultConfig {
-    applicationId = "com.google.aiedge.gallery"
+    applicationId = "com.geoai.geoaimobile"
     minSdk = 26
     targetSdk = 35
     versionCode = 1
     versionName = "1.0.4"
 
     // Needed for HuggingFace auth workflows.
-    manifestPlaceholders["appAuthRedirectScheme"] = "com.google.ai.edge.gallery.oauth"
+    manifestPlaceholders["appAuthRedirectScheme"] = "com.geoai.geoaimobile.oauth"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
