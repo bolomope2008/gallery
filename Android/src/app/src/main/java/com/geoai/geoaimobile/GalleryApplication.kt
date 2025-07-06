@@ -17,17 +17,21 @@
 package com.geoai.geoaimobile
 
 import android.app.Application
+import androidx.work.Configuration
+import androidx.work.WorkManager
 import com.geoai.geoaimobile.common.writeLaunchInfo
 import com.geoai.geoaimobile.data.DataStoreRepository
 import com.geoai.geoaimobile.ui.theme.ThemeSettings
+import com.geoai.geoaimobile.worker.HiltWorkerFactory
 import com.google.firebase.FirebaseApp
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 
 @HiltAndroidApp
-class GalleryApplication : Application() {
+class GalleryApplication : Application(), Configuration.Provider {
 
   @Inject lateinit var dataStoreRepository: DataStoreRepository
+  @Inject lateinit var workerFactory: HiltWorkerFactory
 
   override fun onCreate() {
     super.onCreate()
@@ -39,4 +43,9 @@ class GalleryApplication : Application() {
 
     FirebaseApp.initializeApp(this)
   }
+
+  override val workManagerConfiguration: Configuration
+    get() = Configuration.Builder()
+      .setWorkerFactory(workerFactory)
+      .build()
 }

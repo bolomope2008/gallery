@@ -505,7 +505,9 @@ fun ChatPanel(
     if (modelInitializationStatus?.status == ModelInitializationStatusType.INITIALIZING) {
       ModelInitializationStatusChip(
         backend = modelInitializationStatus.backend,
-        phase = modelInitializationStatus.phase
+        phase = modelInitializationStatus.phase,
+        progress = modelInitializationStatus.progress,
+        phaseDetail = modelInitializationStatus.phaseDetail
       )
     }
     
@@ -518,7 +520,7 @@ fun ChatPanel(
         contentAlignment = Alignment.Center
       ) {
         Text(
-          text = "Powered by ${selectedModel.displayName.ifEmpty { selectedModel.name }}",
+          text = "Powered by GeoAI © 2025",
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
         )

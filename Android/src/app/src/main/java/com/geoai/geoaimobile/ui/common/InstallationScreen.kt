@@ -39,6 +39,10 @@ import androidx.compose.ui.unit.dp
 fun InstallationScreen(
     progress: Int = -1, // -1 means indeterminate
     message: String = "Installing AI model...",
+    bytesDownloaded: Long = 0L,
+    totalBytes: Long = 0L,
+    networkType: String = "",
+    isRetrying: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -72,15 +76,47 @@ fun InstallationScreen(
                     
                     Spacer(modifier = Modifier.height(16.dp))
                     
+                    // Progress percentage
                     Text(
                         text = "$progress%",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    
+                    // Download size info
+                    if (totalBytes > 0) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "${formatBytes(bytesDownloaded)} / ${formatBytes(totalBytes)}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    
+                    // Network type indicator
+                    if (networkType.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Network: $networkType",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 } else {
                     // Indeterminate progress
                     LinearProgressIndicator(
                         modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                
+                // Retry indicator
+                if (isRetrying) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Connection lost, retrying...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center
                     )
                 }
                 
@@ -95,4 +131,17 @@ fun InstallationScreen(
             }
         }
     }
+}
+
+/**
+ * Formats bytes into human-readable format
+ */
+private fun formatBytes(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024) return "%.1f KB".format(kb)
+    val mb = kb / 1024.0
+    if (mb < 1024) return "%.1f MB".format(mb)
+    val gb = mb / 1024.0
+    return "%.1f GB".format(gb)
 }

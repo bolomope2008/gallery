@@ -91,6 +91,8 @@ data class ModelInitializationStatus(
   var error: String = "",
   var backend: String = "",
   var phase: String = "",
+  var progress: Int = 0, // Progress percentage (0-100)
+  var phaseDetail: String = "", // Detailed phase description
 )
 
 enum class ModelInitializationStatusType {
@@ -149,6 +151,21 @@ data class ModelManagerUiState(
   
   /** Installation progress (0-100, or -1 for indeterminate). */
   val installationProgress: Int = -1,
+  
+  /** Bytes downloaded during installation. */
+  val installationBytesDownloaded: Long = 0L,
+  
+  /** Total bytes to download during installation. */
+  val installationTotalBytes: Long = 0L,
+  
+  /** Current download phase message. */
+  val installationPhase: String = "",
+  
+  /** Network type used for download. */
+  val networkType: String = "",
+  
+  /** Whether the download is retrying after failure. */
+  val isRetrying: Boolean = false,
 )
 
 enum class PreloadedModelError {
@@ -207,6 +224,13 @@ constructor(
       val isInstalled = prefs.getBoolean(InstallationConfig.PREF_KEY_MODEL_INSTALLED, false)
       val installedVersion = prefs.getInt(InstallationConfig.PREF_KEY_INSTALLATION_VERSION, 0)
       
+      // Restore the actual model filename from preferences
+      val savedModelFilename = prefs.getString(InstallationConfig.PREF_KEY_MODEL_FILENAME, null)
+      if (!savedModelFilename.isNullOrEmpty()) {
+        PreloadedModel.setActualModelName(savedModelFilename)
+        Log.d(TAG, "Restored model filename from preferences: $savedModelFilename")
+      }
+      
       // Check if model file exists
       val modelFile = File(PreloadedModel.getModelPath(context))
       
@@ -234,18 +258,29 @@ constructor(
             when (workInfo?.state) {
               WorkInfo.State.RUNNING -> {
                 val progress = workInfo.progress.getInt(ModelInstallationWorker.KEY_PROGRESS, -1)
+                val bytesDownloaded = workInfo.progress.getLong(ModelInstallationWorker.KEY_BYTES_DOWNLOADED, 0L)
+                val totalBytes = workInfo.progress.getLong(ModelInstallationWorker.KEY_TOTAL_BYTES, 0L)
+                val phase = workInfo.progress.getString(ModelInstallationWorker.KEY_DOWNLOAD_PHASE) ?: ""
+                
                 _uiState.update { 
-                  it.copy(installationProgress = progress)
+                  it.copy(
+                    installationProgress = progress,
+                    installationBytesDownloaded = bytesDownloaded,
+                    installationTotalBytes = totalBytes,
+                    installationPhase = phase
+                  )
                 }
               }
               WorkInfo.State.SUCCEEDED -> {
                 Log.d(TAG, "Model installation succeeded")
-                // Save installation status
+                // Save installation status and actual filename
                 prefs.edit()
                   .putBoolean(InstallationConfig.PREF_KEY_MODEL_INSTALLED, true)
                   .putInt(InstallationConfig.PREF_KEY_INSTALLATION_VERSION, InstallationConfig.INSTALLATION_VERSION)
                   .putLong(InstallationConfig.PREF_KEY_INSTALLATION_TIMESTAMP, System.currentTimeMillis())
+                  .putString(InstallationConfig.PREF_KEY_MODEL_FILENAME, PreloadedModel.MODEL_NAME)
                   .apply()
+                Log.d(TAG, "Saved model filename to preferences: ${PreloadedModel.MODEL_NAME}")
                   
                 // Continue with normal initialization
                 _uiState.update { 
@@ -327,10 +362,13 @@ constructor(
             loadingModelAllowlist = false,
             selectedModel = preloadedModel,
             textInputHistory = textInputHistory,
-            isPreloadedModelInitializing = false,
+            isPreloadedModelInitializing = true, // Keep true until actual model initialization completes
             preloadedModelError = null
           )
         }
+        
+        // Start actual model initialization
+        initializeModel(context, TASK_LLM_ASK_IMAGE, preloadedModel)
         
       } catch (e: Exception) {
         Log.e(TAG, "Failed to initialize preloaded model", e)
@@ -451,6 +489,14 @@ constructor(
             model = model,
             status = ModelInitializationStatusType.INITIALIZED,
           )
+          
+          // For preloaded model, update the initialization state to allow navigation
+          if (model.preloaded) {
+            _uiState.update { 
+              it.copy(isPreloadedModelInitializing = false)
+            }
+          }
+          
           if (model.cleanUpAfterInit) {
             Log.d(TAG, "Model '${model.name}' needs cleaning up after init.")
             cleanupModel(task = task, model = model)
@@ -485,20 +531,24 @@ constructor(
         TaskType.LLM_ASK_IMAGE,
         TaskType.LLM_ASK_AUDIO,
         TaskType.LLM_PROMPT_LAB ->
-          LlmChatModelHelper.initialize(
-            context = context, 
-            model = model, 
-            onDone = onDone,
-            onProgress = { backend, phase ->
-              // Update initialization status with backend and phase info
-              updateModelInitializationStatus(
-                model = model,
-                status = ModelInitializationStatusType.INITIALIZING,
-                backend = backend,
-                phase = phase
-              )
-            }
-          )
+          launch {
+            LlmChatModelHelper.initialize(
+              context = context, 
+              model = model, 
+              onDone = onDone,
+              onProgress = { backend, phase, progress, phaseDetail ->
+                // Update initialization status with detailed progress info
+                updateModelInitializationStatus(
+                  model = model,
+                  status = ModelInitializationStatusType.INITIALIZING,
+                  backend = backend,
+                  phase = phase,
+                  progress = progress,
+                  phaseDetail = phaseDetail
+                )
+              }
+            )
+          }
 
         TaskType.TEST_TASK_1 -> {}
         TaskType.TEST_TASK_2 -> {}
@@ -1113,9 +1163,18 @@ constructor(
     error: String = "",
     backend: String = "",
     phase: String = "",
+    progress: Int = 0,
+    phaseDetail: String = "",
   ) {
     val curModelInstance = uiState.value.modelInitializationStatus.toMutableMap()
-    curModelInstance[model.name] = ModelInitializationStatus(status = status, error = error, backend = backend, phase = phase)
+    curModelInstance[model.name] = ModelInitializationStatus(
+      status = status, 
+      error = error, 
+      backend = backend, 
+      phase = phase,
+      progress = progress,
+      phaseDetail = phaseDetail
+    )
     val newUiState = uiState.value.copy(modelInitializationStatus = curModelInstance)
     _uiState.update { newUiState }
   }

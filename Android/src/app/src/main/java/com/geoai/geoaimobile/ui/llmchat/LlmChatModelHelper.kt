@@ -32,6 +32,12 @@ import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.genai.llminference.GraphOptions
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.withContext
 
 private const val TAG = "AGLlmChatModelHelper"
 
@@ -39,15 +45,66 @@ typealias ResultListener = (partialResult: String, done: Boolean) -> Unit
 
 typealias CleanUpListener = () -> Unit
 
-typealias InitializationProgressListener = (backend: String, phase: String) -> Unit
+typealias InitializationProgressListener = (backend: String, phase: String, progress: Int, phaseDetail: String) -> Unit
 
 data class LlmModelInstance(val engine: LlmInference, var session: LlmInferenceSession)
 
 object LlmChatModelHelper {
   // Indexed by model name.
   private val cleanUpListeners: MutableMap<String, CleanUpListener> = mutableMapOf()
+  
+  /**
+   * Simulates progress during a long-running operation by gradually updating progress
+   */
+  private suspend fun <T> simulateProgressDuringOperation(
+    backend: String,
+    startProgress: Int,
+    endProgress: Int,
+    baseMessage: String,
+    detailMessages: List<String>,
+    onProgress: InitializationProgressListener?,
+    operation: suspend () -> T
+  ): T {
+    val progressScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val progressRange = endProgress - startProgress
+    val totalSteps = detailMessages.size
+    var operationComplete = false
+    
+    var result: T? = null
+    
+    // Start the actual operation in background
+    val operationJob = progressScope.launch {
+      try {
+        result = operation()
+      } finally {
+        operationComplete = true
+      }
+    }
+    
+    // Simulate progress updates
+    progressScope.launch {
+      for (i in detailMessages.indices) {
+        if (operationComplete) break
+        
+        val currentProgress = startProgress + (progressRange * (i + 1) / totalSteps)
+        val message = detailMessages[i]
+        onProgress?.invoke(backend, baseMessage, currentProgress, message)
+        
+        // Wait before next update, but break if operation completes
+        var waitCount = 0
+        while (waitCount < 10 && !operationComplete) { // Check every 300ms for 3 seconds total
+          delay(300)
+          waitCount++
+        }
+      }
+    }
+    
+    // Wait for operation to complete
+    operationJob.join()
+    return result!!
+  }
 
-  fun initialize(context: Context, model: Model, onDone: (String) -> Unit, onProgress: InitializationProgressListener? = null) {
+  suspend fun initialize(context: Context, model: Model, onDone: (String) -> Unit, onProgress: InitializationProgressListener? = null) {
     // Prepare options.
     val maxTokens =
       model.getIntConfigValue(key = ConfigKey.MAX_TOKENS, defaultValue = DEFAULT_MAX_TOKEN)
@@ -71,7 +128,8 @@ object LlmChatModelHelper {
       LlmInference.Backend.GPU -> "GPU"
       else -> "GPU"
     }
-    onProgress?.invoke(backendName, "loading")
+    
+    onProgress?.invoke(backendName, "loading", 10, "Loading model weights from storage...")
     val optionsBuilder =
       LlmInference.LlmInferenceOptions.builder()
         .setModelPath(model.getPath(context = context))
@@ -82,25 +140,64 @@ object LlmChatModelHelper {
 
     // Create an instance of the LLM Inference task and session.
     try {
-      onProgress?.invoke(backendName, "creating")
-      val llmInference = LlmInference.createFromOptions(context, options)
+      // Phase 1: Create LLM Inference with intermediate progress updates
+      onProgress?.invoke(backendName, "creating", 25, "Creating inference engine...")
+      
+      val llmInference = simulateProgressDuringOperation(
+        backend = backendName,
+        startProgress = 25,
+        endProgress = 30,
+        baseMessage = "preparing",
+        detailMessages = listOf(
+          "Preparing inference engine...",
+          "Configuring model parameters...",
+          "Validating model architecture...",
+          "Initializing inference context..."
+        ),
+        onProgress = onProgress
+      ) {
+        withContext(Dispatchers.IO) {
+          LlmInference.createFromOptions(context, options)
+        }
+      }
 
-      onProgress?.invoke(backendName, "optimizing")
-      val session =
-        LlmInferenceSession.createFromOptions(
-          llmInference,
-          LlmInferenceSession.LlmInferenceSessionOptions.builder()
-            .setTopK(topK)
-            .setTopP(topP)
-            .setTemperature(temperature)
-            .setGraphOptions(
-              GraphOptions.builder()
-                .setEnableVisionModality(model.llmSupportImage)
-                .build()
-            )
-            .build(),
-        )
+      // Phase 2: Create session with simulated progress (this is the long operation)
+      val sessionDetailMessages = listOf(
+        "Optimizing GPU kernels for your device...",
+        "Loading model weights to GPU memory...",
+        "Preparing neural network layers...",
+        "Configuring memory buffers...", 
+        "Finalizing GPU optimization..."
+      )
+      
+      val session = simulateProgressDuringOperation(
+        backend = backendName,
+        startProgress = 30,
+        endProgress = 90,
+        baseMessage = "optimizing",
+        detailMessages = sessionDetailMessages,
+        onProgress = onProgress
+      ) {
+        withContext(Dispatchers.IO) {
+          LlmInferenceSession.createFromOptions(
+            llmInference,
+            LlmInferenceSession.LlmInferenceSessionOptions.builder()
+              .setTopK(topK)
+              .setTopP(topP)
+              .setTemperature(temperature)
+              .setGraphOptions(
+                GraphOptions.builder()
+                  .setEnableVisionModality(model.llmSupportImage)
+                  .build()
+              )
+              .build(),
+          )
+        }
+      }
+      
+      onProgress?.invoke(backendName, "ready", 95, "Finalizing model setup...")
       model.instance = LlmModelInstance(engine = llmInference, session = session)
+      onProgress?.invoke(backendName, "completed", 100, "Model ready for inference!")
     } catch (e: Exception) {
       val errorMessage = e.message ?: "Unknown error"
       Log.e(TAG, "Failed to initialize model", e)

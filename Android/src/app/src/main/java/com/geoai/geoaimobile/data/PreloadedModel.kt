@@ -24,9 +24,10 @@ import java.io.File
  * This model is automatically loaded at app startup with fixed configuration.
  */
 object PreloadedModel {
-    const val MODEL_NAME = "gemma-3n-E2B-it-int4.task"
-    const val MODEL_DISPLAY_NAME = "Gemma 3B"
-    const val SOURCE_MODEL_FILENAME = "gemma-3n-E2B-it-int4.task"
+    // Dynamic model name - will be set during discovery/installation
+    var MODEL_NAME = "model.task" // Default fallback name
+    const val MODEL_DISPLAY_NAME = "AI Model"
+    var actualModelFileName: String? = null // Set during Firebase discovery
     
     // Fixed configuration values as per requirements
     const val MAX_TOKENS = 1024
@@ -57,7 +58,7 @@ object PreloadedModel {
         
         val model = Model(
             name = MODEL_NAME,
-            displayName = MODEL_DISPLAY_NAME,
+            displayName = getDisplayName(),
             url = "", // No URL as it's preloaded
             configs = configs,
             sizeInBytes = 3136226711L, // Size from ls -la output
@@ -83,6 +84,29 @@ object PreloadedModel {
         return model
     }
     
+    /**
+     * Sets the actual model filename discovered from Firebase Storage
+     */
+    fun setActualModelName(fileName: String) {
+        actualModelFileName = fileName
+        MODEL_NAME = fileName
+    }
+    
+    /**
+     * Gets the display name based on the actual model file
+     */
+    fun getDisplayName(): String {
+        return actualModelFileName?.let { fileName ->
+            // Extract a nice display name from filename
+            when {
+                fileName.contains("gemma", ignoreCase = true) -> "Gemma AI"
+                fileName.contains("llama", ignoreCase = true) -> "Llama AI"
+                fileName.contains("mistral", ignoreCase = true) -> "Mistral AI"
+                else -> "AI Model"
+            }
+        } ?: MODEL_DISPLAY_NAME
+    }
+
     /**
      * Gets the path where the model should be stored in app's external files directory
      */

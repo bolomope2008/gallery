@@ -149,10 +149,24 @@ fun GalleryNavHost(
     uiState.isInstallingModel -> {
       InstallationScreen(
         progress = uiState.installationProgress,
-        message = "Installing AI model..."
+        message = if (uiState.installationPhase.isNotEmpty()) uiState.installationPhase else "Installing AI model...",
+        bytesDownloaded = uiState.installationBytesDownloaded,
+        totalBytes = uiState.installationTotalBytes,
+        networkType = uiState.networkType,
+        isRetrying = uiState.isRetrying
       )
     }
+    uiState.isPreloadedModelInitializing && uiState.selectedModel.name.isNotEmpty() -> {
+      // For existing models, go directly to chat interface with initialization status
+      // This allows users to start typing while model loads in background
+      LaunchedEffect(uiState.selectedModel) {
+        navController.navigate("${LlmAskImageDestination.route}/${uiState.selectedModel.name}") {
+          popUpTo(ROUTE_PLACEHOLDER) { inclusive = true }
+        }
+      }
+    }
     uiState.isPreloadedModelInitializing -> {
+      // For new installations, show loading screen during initialization
       LoadingScreen(message = "Initializing AI model, please wait...")
     }
     uiState.preloadedModelError != null -> {

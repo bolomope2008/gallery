@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.geoai.geoaimobile.R
+import com.geoai.geoaimobile.ui.theme.customColors
 
 /**
  * Composable function to display a visual indicator for model initialization status.
@@ -50,7 +51,9 @@ import com.geoai.geoaimobile.R
 @Composable
 fun ModelInitializationStatusChip(
   backend: String = "",
-  phase: String = ""
+  phase: String = "",
+  progress: Int = 0,
+  phaseDetail: String = ""
 ) {
   Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
     Box(
@@ -64,27 +67,35 @@ fun ModelInitializationStatusChip(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
       ) {
-        // Circular progress indicator.
+        // Circular progress indicator with determinate progress and green color
         CircularProgressIndicator(
+          progress = { if (progress > 0) progress / 100f else 0f },
           modifier = Modifier.size(14.dp),
           strokeWidth = 2.dp,
-          color = MaterialTheme.colorScheme.onSecondaryContainer,
+          color = MaterialTheme.customColors.successColor,
+          trackColor = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.3f),
         )
 
         Spacer(modifier = Modifier.width(8.dp))
 
-        // Dynamic text message based on backend and phase
-        val messageRes = when {
-          backend == "GPU" && phase == "loading" -> R.string.model_loading_gpu
-          backend == "CPU" && phase == "loading" -> R.string.model_loading_cpu
-          backend == "GPU" && phase == "optimizing" -> R.string.model_optimizing_gpu
-          backend == "CPU" && phase == "optimizing" -> R.string.model_preparing_cpu
-          backend == "CPU" && phase == "fallback" -> R.string.model_gpu_fallback
-          else -> R.string.model_is_initializing_msg
+        // Dynamic text message with progress and detailed phase info
+        val message = when {
+          phaseDetail.isNotEmpty() && progress > 0 -> "$phaseDetail ($progress%)"
+          phaseDetail.isNotEmpty() -> phaseDetail
+          backend == "GPU" && phase == "loading" -> "Loading model for GPU ($progress%)"
+          backend == "CPU" && phase == "loading" -> "Loading model for CPU ($progress%)"
+          backend == "GPU" && phase == "creating" -> "Creating GPU inference engine ($progress%)"
+          backend == "CPU" && phase == "creating" -> "Creating CPU inference engine ($progress%)"
+          backend == "GPU" && phase == "optimizing" -> "Optimizing for GPU acceleration ($progress%)"
+          backend == "CPU" && phase == "optimizing" -> "Preparing CPU processing ($progress%)"
+          backend.isNotEmpty() && progress > 0 -> "Initializing on $backend ($progress%)"
+          backend.isNotEmpty() -> "Initializing on $backend"
+          progress > 0 -> "Initializing AI model ($progress%)"
+          else -> "Initializing AI model..."
         }
         
         Text(
-          stringResource(messageRes),
+          message,
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSecondaryContainer,
         )
