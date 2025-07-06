@@ -500,6 +500,22 @@ fun ChatPanel(
         }
       }
     }
+    
+    // Show "Powered by" label for preloaded models
+    if (selectedModel.preloaded) {
+      Box(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(vertical = 4.dp),
+        contentAlignment = Alignment.Center
+      ) {
+        Text(
+          text = "Powered by ${selectedModel.displayName.ifEmpty { selectedModel.name }}",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+        )
+      }
+    }
 
     // Chat input
     when (chatInputType) {

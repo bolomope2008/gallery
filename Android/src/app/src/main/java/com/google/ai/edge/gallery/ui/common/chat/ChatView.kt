@@ -64,6 +64,7 @@ import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.ModelDownloadStatusType
 import com.google.ai.edge.gallery.data.Task
 import com.google.ai.edge.gallery.ui.common.ModelPageAppBar
+import com.google.ai.edge.gallery.ui.common.SimplifiedModelPageAppBar
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import com.google.ai.edge.gallery.ui.modelmanager.PagerScrollState
 import kotlin.math.absoluteValue
@@ -103,23 +104,28 @@ fun ChatView(
   var selectedImage by remember { mutableStateOf<Bitmap?>(null) }
   var showImageViewer by remember { mutableStateOf(false) }
 
+  // For preloaded model, we don't need paging since there's only one model
+  val isPreloadedModel = selectedModel.preloaded
   val pagerState =
     rememberPagerState(
-      initialPage = task.models.indexOf(selectedModel),
-      pageCount = { task.models.size },
+      initialPage = if (isPreloadedModel) 0 else task.models.indexOf(selectedModel),
+      pageCount = { if (isPreloadedModel) 1 else task.models.size },
     )
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
   var navigatingUp by remember { mutableStateOf(false) }
 
   val handleNavigateUp = {
-    navigatingUp = true
-    navigateUp()
+    // For preloaded model, we don't navigate up as there's no back button
+    if (!isPreloadedModel) {
+      navigatingUp = true
+      navigateUp()
 
-    // clean up all models.
-    scope.launch(Dispatchers.Default) {
-      for (model in task.models) {
-        modelManagerViewModel.cleanupModel(task = task, model = model)
+      // clean up all models.
+      scope.launch(Dispatchers.Default) {
+        for (model in task.models) {
+          modelManagerViewModel.cleanupModel(task = task, model = model)
+        }
       }
     }
   }
@@ -164,33 +170,48 @@ fun ChatView(
       .collect { scrollState -> modelManagerViewModel.pagerScrollState.value = scrollState }
   }
 
-  // Handle system's edge swipe.
-  BackHandler { handleNavigateUp() }
+  // Handle system's edge swipe (disabled for preloaded model)
+  if (!isPreloadedModel) {
+    BackHandler { handleNavigateUp() }
+  }
 
   Scaffold(
     modifier = modifier,
     topBar = {
-      ModelPageAppBar(
-        task = task,
-        model = selectedModel,
-        modelManagerViewModel = modelManagerViewModel,
-        canShowResetSessionButton = true,
-        isResettingSession = uiState.isResettingSession,
-        inProgress = uiState.inProgress,
-        modelPreparing = uiState.preparing,
-        onResetSessionClicked = onResetSessionClicked,
-        onConfigChanged = { old, new ->
-          viewModel.addConfigChangedMessage(
-            oldConfigValues = old,
-            newConfigValues = new,
-            model = selectedModel,
-          )
-        },
-        onBackClicked = { handleNavigateUp() },
-        onModelSelected = { model ->
-          scope.launch { pagerState.animateScrollToPage(task.models.indexOf(model)) }
-        },
-      )
+      // Use simplified app bar for preloaded models
+      if (selectedModel.preloaded) {
+        SimplifiedModelPageAppBar(
+          task = task,
+          model = selectedModel,
+          canShowResetSessionButton = true,
+          isResettingSession = uiState.isResettingSession,
+          inProgress = uiState.inProgress,
+          modelPreparing = uiState.preparing,
+          onResetSessionClicked = onResetSessionClicked,
+        )
+      } else {
+        ModelPageAppBar(
+          task = task,
+          model = selectedModel,
+          modelManagerViewModel = modelManagerViewModel,
+          canShowResetSessionButton = true,
+          isResettingSession = uiState.isResettingSession,
+          inProgress = uiState.inProgress,
+          modelPreparing = uiState.preparing,
+          onResetSessionClicked = onResetSessionClicked,
+          onConfigChanged = { old, new ->
+            viewModel.addConfigChangedMessage(
+              oldConfigValues = old,
+              newConfigValues = new,
+              model = selectedModel,
+            )
+          },
+          onBackClicked = { handleNavigateUp() },
+          onModelSelected = { model ->
+            scope.launch { pagerState.animateScrollToPage(task.models.indexOf(model)) }
+          },
+        )
+      }
     },
   ) { innerPadding ->
     Box {

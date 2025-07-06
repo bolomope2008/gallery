@@ -29,6 +29,8 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,7 +56,11 @@ import com.google.ai.edge.gallery.data.TASK_LLM_PROMPT_LAB
 import com.google.ai.edge.gallery.data.Task
 import com.google.ai.edge.gallery.data.TaskType
 import com.google.ai.edge.gallery.data.getModelByName
-import com.google.ai.edge.gallery.ui.home.HomeScreen
+import com.google.ai.edge.gallery.ui.common.ErrorScreen
+import com.google.ai.edge.gallery.ui.common.ErrorType
+import com.google.ai.edge.gallery.ui.common.InstallationScreen
+import com.google.ai.edge.gallery.ui.common.LoadingScreen
+import com.google.ai.edge.gallery.ui.modelmanager.PreloadedModelError
 import com.google.ai.edge.gallery.ui.llmchat.LlmAskAudioDestination
 import com.google.ai.edge.gallery.ui.llmchat.LlmAskAudioScreen
 import com.google.ai.edge.gallery.ui.llmchat.LlmAskAudioViewModel
@@ -113,8 +119,7 @@ fun GalleryNavHost(
   modelManagerViewModel: ModelManagerViewModel = hiltViewModel(),
 ) {
   val lifecycleOwner = LocalLifecycleOwner.current
-  var showModelManager by remember { mutableStateOf(false) }
-  var pickedTask by remember { mutableStateOf<Task?>(null) }
+  val uiState by modelManagerViewModel.uiState.collectAsState()
 
   // Track whether app is in foreground.
   DisposableEffect(lifecycleOwner) {
@@ -139,34 +144,44 @@ fun GalleryNavHost(
     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
   }
 
-  HomeScreen(
-    modelManagerViewModel = modelManagerViewModel,
-    navigateToTaskScreen = { task ->
-      pickedTask = task
-      showModelManager = true
-    },
-  )
-
-  // Model manager.
-  AnimatedVisibility(
-    visible = showModelManager,
-    enter = slideInHorizontally(initialOffsetX = { it }),
-    exit = slideOutHorizontally(targetOffsetX = { it }),
-  ) {
-    val curPickedTask = pickedTask
-    if (curPickedTask != null) {
-      ModelManager(
-        viewModel = modelManagerViewModel,
-        task = curPickedTask,
-        onModelClicked = { model ->
-          navigateToTaskScreen(
-            navController = navController,
-            taskType = curPickedTask.type,
-            model = model,
-          )
-        },
-        navigateUp = { showModelManager = false },
+  // Handle model installation and initialization states
+  when {
+    uiState.isInstallingModel -> {
+      InstallationScreen(
+        progress = uiState.installationProgress,
+        message = "Installing AI model..."
       )
+    }
+    uiState.isPreloadedModelInitializing -> {
+      LoadingScreen(message = "Initializing AI model, please wait...")
+    }
+    uiState.preloadedModelError != null -> {
+      val errorType = when (uiState.preloadedModelError) {
+        PreloadedModelError.MODEL_NOT_FOUND -> ErrorType.MODEL_NOT_FOUND
+        PreloadedModelError.MODEL_LOAD_FAILED -> ErrorType.MODEL_LOAD_FAILED
+        PreloadedModelError.INSUFFICIENT_RESOURCES -> ErrorType.INSUFFICIENT_RESOURCES
+        PreloadedModelError.INSTALLATION_FAILED -> ErrorType.MODEL_NOT_FOUND // Show as installation issue
+        else -> ErrorType.MODEL_LOAD_FAILED
+      }
+      val errorMessage = when (uiState.preloadedModelError) {
+        PreloadedModelError.INSTALLATION_FAILED -> "Model installation failed. Please ensure the model file is accessible and restart the app."
+        else -> null
+      }
+      ErrorScreen(
+        errorType = errorType,
+        customMessage = errorMessage,
+        onRetry = if (errorType == ErrorType.MODEL_LOAD_FAILED || uiState.preloadedModelError == PreloadedModelError.INSTALLATION_FAILED) {
+          { modelManagerViewModel.retryPreloadedModel() }
+        } else null
+      )
+    }
+    uiState.selectedModel.name.isNotEmpty() && !uiState.isPreloadedModelInitializing && !uiState.isInstallingModel -> {
+      // Navigate directly to Ask Image chat when model is ready
+      LaunchedEffect(uiState.selectedModel) {
+        navController.navigate("${LlmAskImageDestination.route}/${uiState.selectedModel.name}") {
+          popUpTo(ROUTE_PLACEHOLDER) { inclusive = true }
+        }
+      }
     }
   }
 

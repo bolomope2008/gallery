@@ -90,7 +90,17 @@ object LlmChatModelHelper {
         )
       model.instance = LlmModelInstance(engine = llmInference, session = session)
     } catch (e: Exception) {
-      onDone(cleanUpMediapipeTaskErrorMessage(e.message ?: "Unknown error"))
+      val errorMessage = e.message ?: "Unknown error"
+      Log.e(TAG, "Failed to initialize model", e)
+      
+      // Check for common error patterns
+      if (errorMessage.contains("memory", ignoreCase = true) || 
+          errorMessage.contains("resource", ignoreCase = true) ||
+          errorMessage.contains("allocation", ignoreCase = true)) {
+        onDone("Insufficient device resources. Your device may not have enough memory to run this model.")
+      } else {
+        onDone(cleanUpMediapipeTaskErrorMessage(errorMessage))
+      }
       return
     }
     onDone("")

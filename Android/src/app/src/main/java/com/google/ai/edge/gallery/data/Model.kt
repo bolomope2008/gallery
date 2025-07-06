@@ -35,6 +35,9 @@ data class PromptTemplate(val title: String, val description: String, val prompt
 data class Model(
   /** The name (for display purpose) of the model. */
   val name: String,
+  
+  /** The display name of the model (optional, defaults to name) */
+  val displayName: String = "",
 
   /** The version of the model. */
   val version: String = "_",
@@ -92,6 +95,9 @@ data class Model(
 
   /** Whether the model is imported or not. */
   val imported: Boolean = false,
+  
+  /** Whether the model is preloaded with the app. */
+  val preloaded: Boolean = false,
 
   // The following fields are managed by the app. Don't need to set manually.
   var normalizedName: String = "",
@@ -120,6 +126,11 @@ data class Model(
   }
 
   fun getPath(context: Context, fileName: String = downloadFileName): String {
+    if (preloaded) {
+      return listOf(context.getExternalFilesDir(null)?.absolutePath ?: "", fileName)
+        .joinToString(File.separator)
+    }
+    
     if (imported) {
       return listOf(context.getExternalFilesDir(null)?.absolutePath ?: "", fileName)
         .joinToString(File.separator)

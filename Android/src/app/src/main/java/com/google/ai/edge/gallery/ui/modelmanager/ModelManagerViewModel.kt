@@ -18,6 +18,7 @@ package com.google.ai.edge.gallery.ui.modelmanager
 
 import android.content.Context
 import android.util.Log
+import androidx.lifecycle.Observer
 import androidx.activity.result.ActivityResult
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
@@ -33,8 +34,10 @@ import com.google.ai.edge.gallery.data.EMPTY_MODEL
 import com.google.ai.edge.gallery.data.IMPORTS_DIR
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.ModelAllowlist
+import com.google.ai.edge.gallery.data.InstallationConfig
 import com.google.ai.edge.gallery.data.ModelDownloadStatus
 import com.google.ai.edge.gallery.data.ModelDownloadStatusType
+import com.google.ai.edge.gallery.data.PreloadedModel
 import com.google.ai.edge.gallery.data.TASKS
 import com.google.ai.edge.gallery.data.TASK_LLM_ASK_AUDIO
 import com.google.ai.edge.gallery.data.TASK_LLM_ASK_IMAGE
@@ -52,9 +55,15 @@ import com.google.ai.edge.gallery.ui.common.AuthConfig
 import com.google.ai.edge.gallery.ui.llmchat.LlmChatModelHelper
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import com.google.ai.edge.gallery.worker.ModelInstallationWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import javax.inject.Inject
@@ -126,7 +135,26 @@ data class ModelManagerUiState(
 
   /** The history of text inputs entered by the user. */
   val textInputHistory: List<String> = listOf(),
+  
+  /** Whether the preloaded model is being initialized. */
+  val isPreloadedModelInitializing: Boolean = false,
+  
+  /** Error state for preloaded model. */
+  val preloadedModelError: PreloadedModelError? = null,
+  
+  /** Whether the model is being installed (first-time setup). */
+  val isInstallingModel: Boolean = false,
+  
+  /** Installation progress (0-100, or -1 for indeterminate). */
+  val installationProgress: Int = -1,
 )
+
+enum class PreloadedModelError {
+  MODEL_NOT_FOUND,
+  MODEL_LOAD_FAILED,
+  INSUFFICIENT_RESOURCES,
+  INSTALLATION_FAILED
+}
 
 data class PagerScrollState(val page: Int = 0, val offset: Float = 0f)
 
@@ -158,30 +186,177 @@ constructor(
   var pagerScrollState: MutableStateFlow<PagerScrollState> = MutableStateFlow(PagerScrollState())
 
   init {
-    loadModelAllowlist()
+    initializePreloadedModel()
   }
 
   override fun onCleared() {
     super.onCleared()
     authService.dispose()
   }
+  
+  /**
+   * Initializes the preloaded model on app startup.
+   * Handles both installation (first run) and normal initialization.
+   */
+  private fun initializePreloadedModel() {
+    viewModelScope.launch(Dispatchers.IO) {
+      // Check if model needs to be installed
+      val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+      val isInstalled = prefs.getBoolean(InstallationConfig.PREF_KEY_MODEL_INSTALLED, false)
+      val installedVersion = prefs.getInt(InstallationConfig.PREF_KEY_INSTALLATION_VERSION, 0)
+      
+      // Check if model file exists
+      val modelFile = File(PreloadedModel.getModelPath(context))
+      
+      if (!isInstalled || installedVersion < InstallationConfig.INSTALLATION_VERSION || !modelFile.exists()) {
+        // Need to install the model
+        Log.d(TAG, "Model installation required. Installed: $isInstalled, Version: $installedVersion, File exists: ${modelFile.exists()}")
+        
+        _uiState.update { 
+          it.copy(
+            isInstallingModel = true,
+            installationProgress = -1
+          )
+        }
+        
+        // Start installation worker
+        val workRequest = OneTimeWorkRequestBuilder<ModelInstallationWorker>()
+          .build()
+          
+        val workManager = WorkManager.getInstance(context)
+        workManager.enqueue(workRequest)
+        
+        // Observe work progress on main thread
+        viewModelScope.launch(Dispatchers.Main) {
+          workManager.getWorkInfoByIdLiveData(workRequest.id).observeForever { workInfo ->
+            when (workInfo?.state) {
+              WorkInfo.State.RUNNING -> {
+                val progress = workInfo.progress.getInt(ModelInstallationWorker.KEY_PROGRESS, -1)
+                _uiState.update { 
+                  it.copy(installationProgress = progress)
+                }
+              }
+              WorkInfo.State.SUCCEEDED -> {
+                Log.d(TAG, "Model installation succeeded")
+                // Save installation status
+                prefs.edit()
+                  .putBoolean(InstallationConfig.PREF_KEY_MODEL_INSTALLED, true)
+                  .putInt(InstallationConfig.PREF_KEY_INSTALLATION_VERSION, InstallationConfig.INSTALLATION_VERSION)
+                  .putLong(InstallationConfig.PREF_KEY_INSTALLATION_TIMESTAMP, System.currentTimeMillis())
+                  .apply()
+                  
+                // Continue with normal initialization
+                _uiState.update { 
+                  it.copy(
+                    isInstallingModel = false,
+                    isPreloadedModelInitializing = true
+                  )
+                }
+                loadPreloadedModel()
+              }
+              WorkInfo.State.FAILED -> {
+                Log.e(TAG, "Model installation failed")
+                _uiState.update { 
+                  it.copy(
+                    isInstallingModel = false,
+                    preloadedModelError = PreloadedModelError.INSTALLATION_FAILED
+                  )
+                }
+              }
+              else -> { /* Other states */ }
+            }
+          }
+        }
+      } else {
+        // Model already installed, proceed with loading
+        Log.d(TAG, "Model already installed, loading...")
+        _uiState.update { it.copy(isPreloadedModelInitializing = true) }
+        loadPreloadedModel()
+      }
+    }
+  }
+  
+  /**
+   * Loads the preloaded model after installation is complete.
+   */
+  private fun loadPreloadedModel() {
+    viewModelScope.launch(Dispatchers.IO) {
+      try {
+        
+        // Create the preloaded model
+        val preloadedModel = PreloadedModel.createModel()
+        
+        // Clear existing tasks and add the preloaded model
+        TASK_LLM_ASK_IMAGE.models.clear()
+        TASK_LLM_ASK_IMAGE.models.add(preloadedModel)
+        
+        // Also add to other tasks for compatibility, but we'll only use Ask Image
+        TASK_LLM_CHAT.models.clear()
+        TASK_LLM_CHAT.models.add(preloadedModel)
+        TASK_LLM_PROMPT_LAB.models.clear()
+        TASK_LLM_PROMPT_LAB.models.add(preloadedModel)
+        TASK_LLM_ASK_AUDIO.models.clear()
+        TASK_LLM_ASK_AUDIO.models.add(preloadedModel)
+        
+        // Process tasks
+        processTasks()
+        
+        // Update UI state with the preloaded model
+        val modelDownloadStatus = mutableMapOf<String, ModelDownloadStatus>()
+        modelDownloadStatus[preloadedModel.name] = ModelDownloadStatus(
+          status = ModelDownloadStatusType.SUCCEEDED,
+          totalBytes = preloadedModel.sizeInBytes,
+          receivedBytes = preloadedModel.sizeInBytes
+        )
+        
+        val modelInitStatus = mutableMapOf<String, ModelInitializationStatus>()
+        modelInitStatus[preloadedModel.name] = ModelInitializationStatus(
+          status = ModelInitializationStatusType.NOT_INITIALIZED
+        )
+        
+        // Load text input history
+        val textInputHistory = dataStoreRepository.readTextInputHistory()
+        
+        _uiState.update {
+          ModelManagerUiState(
+            tasks = TASKS.toList(),
+            modelDownloadStatus = modelDownloadStatus,
+            modelInitializationStatus = modelInitStatus,
+            loadingModelAllowlist = false,
+            selectedModel = preloadedModel,
+            textInputHistory = textInputHistory,
+            isPreloadedModelInitializing = false,
+            preloadedModelError = null
+          )
+        }
+        
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to initialize preloaded model", e)
+        _uiState.update { 
+          it.copy(
+            isPreloadedModelInitializing = false,
+            preloadedModelError = PreloadedModelError.MODEL_LOAD_FAILED
+          )
+        }
+      }
+    }
+  }
 
   fun selectModel(model: Model) {
     _uiState.update { _uiState.value.copy(selectedModel = model) }
   }
+  
+  /**
+   * Retries loading the preloaded model after a failure.
+   */
+  fun retryPreloadedModel() {
+    initializePreloadedModel()
+  }
 
   fun downloadModel(task: Task, model: Model) {
-    // Update status.
-    setDownloadStatus(
-      curModel = model,
-      status = ModelDownloadStatus(status = ModelDownloadStatusType.IN_PROGRESS),
-    )
-
-    // Delete the model files first.
-    deleteModel(task = task, model = model)
-
-    // Start to send download request.
-    downloadRepository.downloadModel(model, onStatusUpdated = this::setDownloadStatus)
+    // Model downloading is disabled in the simplified app
+    Log.d(TAG, "Model downloading is disabled. Only preloaded model is supported.")
+    return
   }
 
   fun cancelDownloadModel(task: Task, model: Model) {
@@ -279,12 +454,28 @@ constructor(
             cleanupModel(task = task, model = model)
           }
         } else if (error.isNotEmpty()) {
-          Log.d(TAG, "Model '${model.name}' failed to initialize")
+          Log.d(TAG, "Model '${model.name}' failed to initialize: $error")
           updateModelInitializationStatus(
             model = model,
             status = ModelInitializationStatusType.ERROR,
             error = error,
           )
+          
+          // For preloaded model, update the error state in UI
+          if (model.preloaded) {
+            val errorType = when {
+              error.contains("Insufficient device resources", ignoreCase = true) -> 
+                PreloadedModelError.INSUFFICIENT_RESOURCES
+              else -> 
+                PreloadedModelError.MODEL_LOAD_FAILED
+            }
+            _uiState.update { 
+              it.copy(
+                isPreloadedModelInitializing = false,
+                preloadedModelError = errorType
+              )
+            }
+          }
         }
       }
       when (task.type) {
@@ -411,6 +602,11 @@ constructor(
   }
 
   fun addImportedLlmModel(info: ImportedModel) {
+    // Model importing is disabled in the simplified app
+    Log.d(TAG, "Model importing is disabled. Only preloaded model is supported.")
+    return
+    
+    /* Original implementation disabled
     Log.d(TAG, "adding imported llm model: $info")
 
     // Create model.
@@ -464,6 +660,7 @@ constructor(
     }
     importedModels.add(info)
     dataStoreRepository.saveImportedModels(importedModels = importedModels)
+    */
   }
 
   fun getTokenStatusAndData(): TokenStatusAndData {
@@ -636,6 +833,12 @@ constructor(
   }
 
   fun loadModelAllowlist() {
+    // Model allowlist loading is disabled in the simplified app
+    // The preloaded model is initialized directly in init{}
+    Log.d(TAG, "Model allowlist loading is disabled. Using preloaded model.")
+    return
+    
+    /* Original implementation disabled
     _uiState.update {
       uiState.value.copy(loadingModelAllowlist = true, loadingModelAllowlistError = "")
     }
@@ -702,6 +905,7 @@ constructor(
         e.printStackTrace()
       }
     }
+    */
   }
 
   fun setAppInForeground(foreground: Boolean) {
